@@ -64,7 +64,7 @@ def train(cases):
     n = len(dataloader)
     onehot_encoding = torch.eye(10).to(device)
 
-    for epoch in range(301):
+    for epoch in range(131):
         log_loss_D, log_loss_G = [], []
 
         for i, (real_img, labels) in tqdm(enumerate(dataloader), total=n):
