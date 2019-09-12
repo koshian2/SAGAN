@@ -13,7 +13,7 @@ def init_xavier_uniform(layer):
 # SPectral Norm
 # https://github.com/ajbrock/BigGAN-PyTorch/blob/master/TFHub/biggan_v1.py
 
-def l2normalize(v, eps=1e-4):
+def l2normalize(v, eps=1e-8):
 	return v / (v.norm() + eps)
 
 class SpectralNorm(nn.Module):
@@ -88,6 +88,7 @@ class ConditionalBatchNorm2d(nn.Module):
     return out
 
 ## Spectral Conv layer
+# torch.utils側を使うとDが2ぐらいからゆるやかに減少
 class SNConv2d(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size, stride=1, padding=0):
         super().__init__()
