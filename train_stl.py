@@ -9,25 +9,41 @@ import glob
 import numpy as np
 
 import losses
-import models.resnet_size_32 as cifar_resnet
+import models.resnet_size_48 as stl_resnet
 from inception_score import inceptions_score_all_weights
 
-def load_cifar(batch_size):
+def load_stl(batch_size):
+    # first, store as tensor
     trans = transforms.Compose([
+        transforms.Resize(size=(48, 48)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-    dataset = torchvision.datasets.CIFAR10(root="./data", train=True,
-                transform=trans, download=True)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                shuffle=True, num_workers=4)
+    # train + test (# 13000)
+    dataset = torchvision.datasets.STL10(root="./data", split="train", transform=trans, download=True)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=100, shuffle=False)
+    imgs, labels = [], []
+    for x, y in dataloader:
+        imgs.append(x)
+        labels.append(y)
+    dataset = torchvision.datasets.STL10(root="./data", split="test", transform=trans)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=100, shuffle=False)
+    for x, y in dataloader:
+        imgs.append(x)
+        labels.append(y)
+    # as tensor
+    all_imgs = torch.cat(imgs, dim=0)
+    all_labels = torch.cat(labels, dim=0)
+    # as dataset
+    dataset = torch.utils.data.TensorDataset(all_imgs, all_labels)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     return dataloader
 
 def train(cases):
     # うまくいかないケース
     # lr=0.0002, n_dis=5, beta1~0
 
-    ## cifar-10
+    ## stl-10
     # case 0
     # conditional, ttur:False, attention:False, hinge_loss
     # case 1
@@ -43,27 +59,23 @@ def train(cases):
     # case 5
     # conditional, ttur:True,  attention:True,  hinge_loss, d_loss_limit
 
-    # Uncodintionalな場合でもうまくいくか？
-    # case 6
-    # un-conditional, ttur:True,  attention:True,  hinge_loss
-    # case 7
-    # un-conditional, ttur:True,  attention:True,  hinge_loss, d_loss_limit
-
-    output_dir = f"cifar_case{cases}"
+    output_dir = f"stl_case{cases}"
 
     batch_size = 256
     device = "cuda"
     
     torch.backends.cudnn.benchmark = True
 
-    enable_conditional = cases in [0, 1, 2, 3, 4, 5]
-    use_ttur = cases in [1, 2, 4, 5, 6, 7]
-    use_attention = cases in [2, 5, 6, 7]
-    gan_loss = losses.HingeLoss(batch_size, device)
-    d_loss_limit = np.inf if cases in [0, 1, 2, 6] else 0.5
+    # cifar = 50000 101 epoch -> 195.3/ep * 101 = 20k
+    # stl = 13000  50.78/ep 
 
-    nb_epoch = 101 if d_loss_limit == np.inf else 201
-    nb_epoch = 1
+    enable_conditional = cases in [0, 1, 2, 3, 4, 5]
+    use_ttur = cases in [1, 2, 4, 5]
+    use_attention = cases in [2, 5]
+    gan_loss = losses.HingeLoss(batch_size, device)
+    d_loss_limit = np.inf if cases in [0, 1, 2] else 0.5
+
+    nb_epoch = 401 if d_loss_limit == np.inf else 801
     
     print("--- Conditions ---")
     print("- Case : ", cases)
@@ -71,10 +83,10 @@ def train(cases):
           ", attention :", use_attention, ", d_loss_limit", d_loss_limit,
           ", loss :", gan_loss)
     
-    dataloader = load_cifar(batch_size)
+    dataloader = load_stl(batch_size)
 
-    model_G = cifar_resnet.Generator(enable_conditional=enable_conditional, use_self_attention=use_attention)
-    model_D = cifar_resnet.Discriminator(enable_conditional=enable_conditional, use_self_attention=use_attention)
+    model_G = stl_resnet.Generator(enable_conditional=enable_conditional, use_self_attention=use_attention)
+    model_D = stl_resnet.Discriminator(enable_conditional=enable_conditional, use_self_attention=use_attention)
     model_G, model_D = model_G.to(device), model_D.to(device)
 
     param_G = torch.optim.Adam(model_G.parameters(), lr=0.0001 if use_ttur else 0.0002, betas=(0, 0.9))
@@ -83,8 +95,6 @@ def train(cases):
     result = {"d_loss": [], "g_loss": []}
     n = len(dataloader)
     onehot_encoding = torch.eye(10).to(device)
-
-    nb_epoch = 1
 
     for epoch in range(nb_epoch):
         log_loss_D, log_loss_G = [], []
@@ -106,10 +116,7 @@ def train(cases):
                 param_D.zero_grad()
 
                 rand_X = torch.randn(batch_len, 128).to(device)
-                if enable_conditional:
-                    fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
-                else:
-                    fake_onehots = None
+                fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
                 fake_img = model_G(rand_X, fake_onehots)
                 g_out = model_D(fake_img, fake_onehots)
 
@@ -129,10 +136,7 @@ def train(cases):
             loss_real = gan_loss(d_out_real, "dis_real")
             # train fake
             rand_X = torch.randn(batch_len, 128).to(device)
-            if enable_conditional:
-                fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
-            else:
-                fake_onehots = None
+            fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
             fake_img = model_G(rand_X, fake_onehots).detach() # important not to backprop
 
             d_out_fake = model_D(fake_img, fake_onehots)
@@ -155,8 +159,8 @@ def train(cases):
             
         if not os.path.exists(output_dir):
             os.mkdir(output_dir)
-        torchvision.utils.save_image(fake_img, f"{output_dir}/epoch_{epoch:03}.png",
-                                    nrow=16, padding=2, normalize=True, range=(-1.0, 1.0))
+        torchvision.utils.save_image(fake_img[:100], f"{output_dir}/epoch_{epoch:03}.png",
+                                    nrow=10, padding=2, normalize=True, range=(-1.0, 1.0))
 
         # 係数保存
         if not os.path.exists(output_dir + "/models"):
@@ -169,14 +173,6 @@ def train(cases):
     with open(output_dir + "/logs.pkl", "wb") as fp:
         pickle.dump(result, fp)
 
-def evaluate(cases):
-    enable_conditional = cases in [0, 1, 2, 3, 4, 5]
-    use_attention = cases in [2, 5]
-
-    inceptions_score_all_weights("cifar_case" + str(cases), cifar_resnet.Generator,
-                                100, 100, n_classes=10,
-                                enable_conditional=enable_conditional, use_self_attention=use_attention)
-
 if __name__ == "__main__":
-    train(0)
+    train(2)
 
