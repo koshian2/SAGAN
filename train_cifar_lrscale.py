@@ -25,57 +25,45 @@ def load_cifar(batch_size):
 
 def train(cases):
     ## cifar-10
+    # すべてのケースでConditional, TTUR, Attentionを使いHinge lossとする
     # case 0
-    # conditional, ttur:False, attention:False, hinge_loss
+    # batch_size = 64, lr /= 4.0
     # case 1
-    # conditional, ttur:True,  attention:False, hinge_loss
+    # batch_size = 128, lr /= 2.0
     # case 2
-    # conditional, ttur:True,  attention:True,  hinge_loss
-
-    # Dのロスが低いほどよいので、ロスを見ながら0.5以上になったらDを5回アップデートする
+    # batch_size = 64, lr = same
     # case 3
-    # conditional, ttur:False, attention:False, hinge_loss, d_loss_limit
-    # case 4
-    # conditional, ttur:True,  attention:False, hinge_loss, d_loss_limit
-    # case 5
-    # conditional, ttur:True,  attention:True,  hinge_loss, d_loss_limit
+    # batch_size = 128, lr = same
 
-    # Uncodintionalな場合でもうまくいくか？
-    # case 6
-    # un-conditional, ttur:True,  attention:True,  hinge_loss
-    # case 7
-    # un-conditional, ttur:True,  attention:True,  hinge_loss, d_loss_limit
+    output_dir = f"cifar_lrscale_case{cases}"
 
-    output_dir = f"cifar_case{cases}"
+    if cases in [0, 2]: batch_size = 64
+    elif cases in [1, 3]: batch_size = 128
 
-    batch_size = 256
+    lr_scale = 1.0
+    if cases == 0: lr_scale = 0.25
+    elif cases == 1: lr_scale = 0.5
+
     device = "cuda"
     
     torch.backends.cudnn.benchmark = True
 
-    enable_conditional = cases in [0, 1, 2, 3, 4, 5]
-    use_ttur = cases in [1, 2, 4, 5, 6, 7]
-    use_attention = cases in [2, 5, 6, 7]
     gan_loss = losses.HingeLoss(batch_size, device)
-    d_loss_limit = np.inf if cases in [0, 1, 2, 6] else 0.5
 
-    nb_epoch = 101 if d_loss_limit == np.inf else 201
-    nb_epoch = 1
+    nb_epoch = 101
     
     print("--- Conditions ---")
     print("- Case : ", cases)
-    print("conditional :", enable_conditional, ", ttur :", use_ttur,
-          ", attention :", use_attention, ", d_loss_limit", d_loss_limit,
-          ", loss :", gan_loss)
+    print("batch_size :", batch_size, ", lr_scale :", lr_scale)
     
     dataloader = load_cifar(batch_size)
 
-    model_G = cifar_resnet.Generator(enable_conditional=enable_conditional, use_self_attention=use_attention)
-    model_D = cifar_resnet.Discriminator(enable_conditional=enable_conditional, use_self_attention=use_attention)
+    model_G = cifar_resnet.Generator(enable_conditional=True, use_self_attention=True)
+    model_D = cifar_resnet.Discriminator(enable_conditional=True, use_self_attention=True)
     model_G, model_D = model_G.to(device), model_D.to(device)
 
-    param_G = torch.optim.Adam(model_G.parameters(), lr=0.0001 if use_ttur else 0.0002, betas=(0, 0.9))
-    param_D = torch.optim.Adam(model_D.parameters(), lr=0.0004 if use_ttur else 0.0002, betas=(0, 0.9))
+    param_G = torch.optim.Adam(model_G.parameters(), lr=0.0001 * lr_scale, betas=(0, 0.9))
+    param_D = torch.optim.Adam(model_D.parameters(), lr=0.0004 * lr_scale, betas=(0, 0.9))    
 
     result = {"d_loss": [], "g_loss": []}
     n = len(dataloader)
@@ -85,38 +73,28 @@ def train(cases):
 
     for epoch in range(nb_epoch):
         log_loss_D, log_loss_G = [], []
-        n_update_only_D = 0
 
         for i, (real_img, labels) in tqdm(enumerate(dataloader), total=n):
             batch_len = len(real_img)
             if batch_len != batch_size: continue
 
             real_img = real_img.to(device)
-            if enable_conditional:
-                real_onehots = onehot_encoding[labels.to(device)]  # conditional
-            else:
-                real_onehots = None  # non conditional
+            real_onehots = onehot_encoding[labels.to(device)]  # conditional
                         
             # train G
-            if n_update_only_D == 0:
-                param_G.zero_grad()
-                param_D.zero_grad()
+            param_G.zero_grad()
+            param_D.zero_grad()
 
-                rand_X = torch.randn(batch_len, 128).to(device)
-                if enable_conditional:
-                    fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
-                else:
-                    fake_onehots = None
-                fake_img = model_G(rand_X, fake_onehots)
-                g_out = model_D(fake_img, fake_onehots)
+            rand_X = torch.randn(batch_len, 128).to(device)
+            fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
+            fake_img = model_G(rand_X, fake_onehots)
+            g_out = model_D(fake_img, fake_onehots)
 
-                loss = gan_loss(g_out, "gen")
-                log_loss_G.append(loss.item())
-                # backprop
-                loss.backward()
-                param_G.step()
-            else:
-                n_update_only_D -= 1
+            loss = gan_loss(g_out, "gen")
+            log_loss_G.append(loss.item())
+            # backprop
+            loss.backward()
+            param_G.step()
 
             # train D
             param_G.zero_grad()
@@ -126,10 +104,7 @@ def train(cases):
             loss_real = gan_loss(d_out_real, "dis_real")
             # train fake
             rand_X = torch.randn(batch_len, 128).to(device)
-            if enable_conditional:
-                fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)
-            else:
-                fake_onehots = None
+            fake_onehots = torch.eye(10)[torch.randint(0, 10, (batch_len,))].to(device)            
             fake_img = model_G(rand_X, fake_onehots).detach() # important not to backprop
 
             d_out_fake = model_D(fake_img, fake_onehots)
@@ -140,10 +115,6 @@ def train(cases):
             # backprop
             loss.backward()
             param_D.step()
-
-            # d_loss_limit check
-            if d_loss_limit != np.inf and statistics.mean(log_loss_D[-5:]) >= d_loss_limit and n_update_only_D == 0:
-                n_update_only_D = 4  # Dのロスが一定以上になったら集中的にDを訓練する
 
         # ログ
         result["d_loss"].append(statistics.mean(log_loss_D))
@@ -176,6 +147,4 @@ def evaluate(cases):
                                 enable_conditional=enable_conditional, use_self_attention=use_attention)
 
 if __name__ == "__main__":
-    for i in range(8):
-        train(i)
-        evaluate(i)
+    train(3)

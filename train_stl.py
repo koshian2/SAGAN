@@ -51,14 +51,6 @@ def train(cases):
     # case 2
     # conditional, ttur:True,  attention:True,  hinge_loss
 
-    # Dのロスが低いほどよいので、ロスを見ながら0.5以上になったらDを5回アップデートする
-    # case 3
-    # conditional, ttur:False, attention:False, hinge_loss, d_loss_limit
-    # case 4
-    # conditional, ttur:True,  attention:False, hinge_loss, d_loss_limit
-    # case 5
-    # conditional, ttur:True,  attention:True,  hinge_loss, d_loss_limit
-
     output_dir = f"stl_case{cases}"
 
     batch_size = 256
@@ -66,14 +58,11 @@ def train(cases):
     
     torch.backends.cudnn.benchmark = True
 
-    # cifar = 50000 101 epoch -> 195.3/ep * 101 = 20k
-    # stl = 13000  50.78/ep 
-
-    enable_conditional = cases in [0, 1, 2, 3, 4, 5]
-    use_ttur = cases in [1, 2, 4, 5]
-    use_attention = cases in [2, 5]
+    enable_conditional = cases in [0, 1, 2]
+    use_ttur = cases in [1, 2]
+    use_attention = cases in [2]
     gan_loss = losses.HingeLoss(batch_size, device)
-    d_loss_limit = np.inf if cases in [0, 1, 2] else 0.5
+    d_loss_limit = np.inf
 
     nb_epoch = 401 if d_loss_limit == np.inf else 801
     
@@ -173,6 +162,17 @@ def train(cases):
     with open(output_dir + "/logs.pkl", "wb") as fp:
         pickle.dump(result, fp)
 
+def evaluate(cases):
+    enable_conditional = True
+    use_attention = cases in [2]
+    n_classes = 10 if enable_conditional else 0
+
+    inceptions_score_all_weights("stl_case" + str(cases), stl_resnet.Generator,
+                                100, 100, n_classes=n_classes,
+                                enable_conditional=enable_conditional, use_self_attention=use_attention)
+
+
 if __name__ == "__main__":
-    train(2)
+    for i in range(3):
+        evaluate(i)
 
