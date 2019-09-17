@@ -1,5 +1,7 @@
 # サブフォルダの除外
 */
 !models/
+!graph/
+!sampling_interpolation/
 *- コピー.py
 sandbox.py

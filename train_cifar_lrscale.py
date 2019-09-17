@@ -69,8 +69,6 @@ def train(cases):
     n = len(dataloader)
     onehot_encoding = torch.eye(10).to(device)
 
-    nb_epoch = 1
-
     for epoch in range(nb_epoch):
         log_loss_D, log_loss_G = [], []
 
@@ -138,13 +136,10 @@ def train(cases):
         pickle.dump(result, fp)
 
 def evaluate(cases):
-    enable_conditional = cases in [0, 1, 2, 3, 4, 5]
-    use_attention = cases in [2, 5, 6, 7]
-    n_classes = 10 if enable_conditional else 0
-
-    inceptions_score_all_weights("cifar_case" + str(cases), cifar_resnet.Generator,
-                                100, 100, n_classes=n_classes,
-                                enable_conditional=enable_conditional, use_self_attention=use_attention)
+    inceptions_score_all_weights("cifar_lrscale_case" + str(cases), cifar_resnet.Generator,
+                                100, 100, n_classes=10,
+                                enable_conditional=True, use_self_attention=True)
 
 if __name__ == "__main__":
-    train(3)
+    for i in range(4):
+        evaluate(i)
